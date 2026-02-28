@@ -787,6 +787,8 @@ class FilterExpression:
             try:
                 obj = self.var.resolve(context)
             except VariableDoesNotExist:
+                if getattr(context, "strict_variables", False) and not ignore_failures:
+                    raise
                 if ignore_failures:
                     obj = None
                 else:
@@ -1019,6 +1021,10 @@ class Variable:
                 template_name,
                 exc_info=True,
             )
+
+            if getattr(context, "strict_variables", False):
+                if isinstance(e, VariableDoesNotExist):
+                    raise
 
             if getattr(e, "silent_variable_failure", False):
                 current = context.template.engine.string_if_invalid

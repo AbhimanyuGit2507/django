@@ -194,7 +194,8 @@ class ForNode(Node):
         else:
             parentloop = {}
         with context.push():
-            values = self.sequence.resolve(context, ignore_failures=True)
+            ignore_failures = not getattr(context, "strict_variables", False)
+            values = self.sequence.resolve(context, ignore_failures=ignore_failures)
             if values is None:
                 values = []
             if not hasattr(values, "__len__"):
@@ -325,6 +326,8 @@ class IfNode(Node):
                 try:
                     match = condition.eval(context)
                 except VariableDoesNotExist:
+                    if getattr(context, "strict_variables", False):
+                        raise
                     match = None
             else:  # else clause
                 match = True
@@ -915,7 +918,8 @@ class TemplateLiteral(Literal):
         return self.text
 
     def eval(self, context):
-        return self.value.resolve(context, ignore_failures=True)
+        ignore_failures = not getattr(context, "strict_variables", False)
+        return self.value.resolve(context, ignore_failures=ignore_failures)
 
 
 class TemplateIfParser(IfParser):

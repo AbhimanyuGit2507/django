@@ -141,10 +141,11 @@ class BaseContext:
 class Context(BaseContext):
     "A stack container for variable context"
 
-    def __init__(self, dict_=None, autoescape=True, use_l10n=None, use_tz=None):
+    def __init__(self, dict_=None, autoescape=True, use_l10n=None, use_tz=None, strict_variables=False):
         self.autoescape = autoescape
         self.use_l10n = use_l10n
         self.use_tz = use_tz
+        self.strict_variables = strict_variables
         self.template_name = "unknown"
         self.render_context = RenderContext()
         # Set to the original template -- as opposed to extended or included
@@ -165,6 +166,7 @@ class Context(BaseContext):
     def __copy__(self):
         duplicate = super().__copy__()
         duplicate.render_context = copy(self.render_context)
+        duplicate.strict_variables = self.strict_variables
         return duplicate
 
     def update(self, other_dict):
