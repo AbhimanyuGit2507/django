@@ -104,17 +104,6 @@ with self.assertRaises(VariableDoesNotExist):
     template.render(context)
 ```
 
-### Summary of Strict mode:
-
-Having a toggle flag `strict_variables` gives developers option to evaluate missing variable errors.
-
-The goal here is early experimentation and validation from mentors, not final API design.
-
-## Next Steps
-
-This prototype only checks feasibility.  
-Next steps are deciding API design, defining consistent behavior across template constructs, and validating compatibility with admin and reusable templates based on maintainer feedback.
-
 ### Authored by: [Abhimanyu Negi](https://github.com/AbhimanyuGit2507/)
 
 
