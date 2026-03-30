@@ -27,6 +27,23 @@ Resulting default behavior:
 - {% if missing %} -> false branch
 - {% for x in missing %} -> empty iteration
 
+## Files Changed
+
+- [django/django/template/context.py](https://github.com/AbhimanyuGit2507/django/blob/strict-template-prototype/django/template/context.py)  
+  Added strict_variables support in Context and ensured it propagates correctly.
+
+- [django/django/template/base.py](https://github.com/AbhimanyuGit2507/django/blob/strict-template-prototype/django/template/base.py)  
+  Centralized strict missing-variable behavior in variable/filter resolution and added missing-variable hook handling.
+
+- [django/django/template/defaulttags.py](https://github.com/AbhimanyuGit2507/django/blob/strict-template-prototype/django/template/defaulttags.py)  
+  Updated control-flow behavior (especially loop resolution) to avoid silent missing-variable handling in strict mode.
+
+- [django/django/template/defaultfilters.py](https://github.com/AbhimanyuGit2507/django/blob/strict-template-prototype/django/template/defaultfilters.py)  
+  Added exists filter implementation using missing-variable resolution hook behavior.
+
+- [django/tests/template_tests/test_strict_mode.py](https://github.com/AbhimanyuGit2507/django/blob/strict-template-prototype/tests/template_tests/test_strict_mode.py)  
+  Added and expanded high-value strict-mode and exists-filter test coverage (edge cases, chaining, nested lookups, strict/non-strict matrix).
+
 ## Changes Introduced
 
 ### 1) Strict Mode Flag
