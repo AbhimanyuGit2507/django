@@ -1,112 +1,197 @@
-# Prototype for Pre-Proposal: Testing Strict handling of missing template variables (Abhimanyu Negi)
+# Prototype: Strict Handling of Missing Template Variables
 
-Note: This is an experimental prototype made for understanding the problem space better and to **get feedback from maintainers**.  
-This is **not** a final design or production implementation.
+> Note: This is an experimental prototype to validate strict handling of missing variables in Django templates. It is not a final API design.
 
 ## Goal
 
-I made small localized changes in my Django fork to understand how missing template variables are currently handled internally and to check if strict behaviour can be introduced with minimal changes.
+Validate whether missing template variables can be surfaced as exceptions (instead of silent fallbacks) with minimal, centralized changes to Django's template resolution pipeline, while preserving default behavior.
 
-This small prototype/code-implementation is meant to showcase my thought-process alignment with the GSOC-2026 "Template ergonomics and missing variables" project and mentors.
+## Core Idea
 
----
+Move missing-variable handling from silent fallback to controlled exception propagation, enforced at the resolution layer rather than in individual template nodes.
 
-### Files changed:
+## Current Django Flow
 
-- Context flag (strict_variables)
-https://github.com/AbhimanyuGit2507/django/blob/strict-template-prototype/django/template/context.py
+1. Variable.resolve()
+2. Variable._resolve_lookup()
+   - Raises VariableDoesNotExist on lookup failure.
+3. FilterExpression.resolve()
+   - Catches VariableDoesNotExist.
+   - Returns fallback values:
+     - empty string
+     - string_if_invalid
+     - None (for paths using ignore_failures=True, such as loop sequence resolution)
 
-- Variable resolution handling
-https://github.com/AbhimanyuGit2507/django/blob/strict-template-prototype/django/template/base.py
+Resulting default behavior:
+- {{ missing }} -> empty string
+- {% if missing %} -> false branch
+- {% for x in missing %} -> empty iteration
 
-- If / for tag behaviour
-https://github.com/AbhimanyuGit2507/django/blob/strict-template-prototype/django/template/defaulttags.py
+## Changes Introduced
 
-- Prototype tests
-https://github.com/AbhimanyuGit2507/django/blob/strict-template-prototype/tests/template_tests/test_strict_mode.py
+### 1) Strict Mode Flag
 
-### Test Results:
+    Context(..., strict_variables=True)
+    Template(..., strict_variables=True)
 
-<img width="1000" alt="image" src="https://github.com/user-attachments/assets/e26d074b-6383-4c18-82e4-67f21b8b385b" />
+- Default mode: unchanged Django behavior.
+- Strict mode: propagate VariableDoesNotExist instead of swallowing it.
+- Flag is carried through context lifecycle and rendering paths.
 
+### 2) Resolution-Layer Enforcement
 
+Modified points:
+- Variable._resolve_lookup
+- FilterExpression.resolve
 
-## Strict mode behaviour:
+Behavior:
 
-When `strict_variables=True` in Context:
+    try:
+        value = self._resolve_lookup(context)
+    except VariableDoesNotExist:
+        if context.strict_variables:
+            raise
+        return fallback
 
-- missing variables raise `VariableDoesNotExist`
-- this applies to rendering, if conditions, for loops, and nested access
-- existing variables behave normally
+In strict mode:
+- Missing variable exceptions are not swallowed.
+- No fallback to empty string or None for missing resolution.
 
-## Explaination of Concept:
+### 3) Loop Behavior in Strict Mode
 
-### 1. Context Flag:
+Default behavior allows missing loop sources to become empty iterations through ignore_failures=True.
 
-Added an internal context flag for strict variable handling 
+Prototype behavior:
+- In strict mode, missing loop sequence resolution is not silently ignored.
+- {% for x in missing %} raises VariableDoesNotExist.
 
-`strict_variables=False | strict_variables=True`
+### 4) Uniform Semantics Across Template Constructs
 
-the flag also gets copied when context is copied, this makes the behaviour consistent.
+Because enforcement is centralized in resolution, behavior is consistent:
 
-example:
+| Construct | Strict mode behavior |
+|---|---|
+| {{ var }} | raises |
+| {% if var %} | raises |
+| {% for x in var %} | raises |
+| {{ obj.attr }} | raises |
 
-`context = Context({"existing": "world"}, strict_variables=True)`
+No node-specific strict logic is required.
 
-### 2. Resolving Variables:
+### 5) Filter-Level Missing-Variable Hook
 
-Currently the missing variables are converted to empty output, but when `strict_variables=True` missing variable exceptions are re-raised instead of ignored. this happens during variable lookup and filter resolution.
+Added optional hook:
 
-example:
+    filter._resolve_missing_variable(context, variable)
 
-```
-template = Template("Hello {{ missing_var }}!", engine=self.engine)
-context = Context({}, strict_variables=True)
+Hook semantics:
+- Triggered only when variable resolution fails.
+- Applied only to the first filter in the chain.
+- If hook handles the miss, its return value continues through remaining filters.
+- Otherwise fallback or raise behavior proceeds as normal.
 
-with self.assertRaises(VariableDoesNotExist):
-    template.render(context)
-```
+### 6) exists Filter
 
-### 3. {% if %} conditions:
+Implemented via missing-variable hook.
 
-Currently the missing variables inside the `{% if %}` become false and rendering continues.
+Usage:
+- {% if variable|exists %}
 
-But in the strict mode, missing varibales raise `VariableDoesNotExist`
+Behavior:
+- Returns False if resolution fails.
+- Returns True if variable exists, even when value is falsy (None, False, 0, empty string).
 
-example:
+This distinguishes:
+- variable is missing
+- variable exists but is falsy
 
-```
-template = Template(
-    "{% if missing_var %}yes{% else %}no{% endif %}",
-    engine=self.engine,
-)
-context = Context({}, strict_variables=True)
+## Edge Cases Considered
 
-with self.assertRaises(VariableDoesNotExist):
-    template.render(context)
-```
+- Nested lookups (a.b.c) fail at first missing segment.
+- Callable resolution behavior remains intact.
+- SimpleLazyObject resolution remains compatible.
+- Filter chaining behavior is deterministic.
+- string_if_invalid paths are bypassed in strict missing-variable failure cases.
+- default filter does not rescue missing variables in strict mode when resolution fails first.
+- Post-exists chaining behaves consistently:
+  - {{ missing|exists|upper }} -> FALSE
+  - {{ missing|exists|exists }} -> True
+- Ordering remains explicit:
+  - {{ missing|upper|exists }} raises in strict mode.
 
-### 4. {% for %} Loops:
+## What Was Verified
 
-Currently missing loop variables resolve to `None` after failure is silently handeled so the loop renders as empty.
+- Strict mode behavior across:
+  - rendering
+  - conditionals
+  - loops
+  - filters
+- Default (non-strict) behavior remains unchanged.
+- Dedicated strict-mode template tests pass.
+- Real-world template exercise performed with Django-Oscar.
+- No structural rewrite of template node classes required.
 
-But in strict mode missing variables raises error, if variable is missing insted of silenty failing.
+## Non-Goals (Prototype Scope)
 
-example:
-```
-template = Template(
-    "{% for item in missing_list %}{{ item }}{% empty %}empty{% endfor %}",
-    engine=self.engine,
-)
-context = Context({}, strict_variables=True)
+- Final public API naming and shape.
+- Backward-compatibility policy decisions.
+- Full framework-wide rollout strategy.
 
-with self.assertRaises(VariableDoesNotExist):
-    template.render(context)
-```
+## How to Try This Locally
 
-### Authored by: [Abhimanyu Negi](https://github.com/AbhimanyuGit2507/)
+### 1) Clone the Fork
 
+    git clone https://github.com/AbhimanyuGit2507/django.git
+    cd django
+    git checkout strict-template-prototype
 
+### 2) Set Up Environment
 
+    python -m venv venv
+    source venv/bin/activate
+    pip install -e .
 
----
+### 3) Run Prototype Tests
+
+    python tests/runtests.py template_tests.test_strict_mode -v 2
+
+### 4) Minimal Example
+
+    from django.template import Context, Template
+
+    # Default behavior
+    t = Template("Hello {{ missing }}")
+    print(t.render(Context({})))
+    # "Hello "
+
+    # Strict mode
+    t = Template("Hello {{ missing }}")
+    ctx = Context({}, strict_variables=True)
+    t.render(ctx)
+    # raises VariableDoesNotExist
+
+### 5) exists Filter Example
+
+    {% if missing|exists %}
+        Exists
+    {% else %}
+        Missing
+    {% endif %}
+
+Output:
+
+    Missing
+
+### 6) Real Project Testing (Optional)
+
+- Point a Django project to this fork.
+- Enable strict mode in the template context path.
+- Observe missing-variable failures during rendering.
+
+## Key Takeaways
+
+- Missing-variable behavior can be controlled centrally.
+- Strict handling does not require template syntax changes.
+- Resolution-layer enforcement is sufficient for broad consistency.
+- Filter hook enables safe extensibility with low complexity.
+- The prototype integrates cleanly with current Django template internals.
